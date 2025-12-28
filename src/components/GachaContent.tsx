@@ -740,7 +740,7 @@ export default function GachaContent() {
               {address.slice(0, 6)}...{address.slice(-4)}
             </div>
             <div className={`text-lg font-bold mt-1 ${hasInsufficientBalance ? 'text-red-500' : 'text-green-600 dark:text-green-400'}`}>
-              Balance: {Number(formattedBalance).toFixed(selectedToken === 'USDC' ? 2 : 0)} {selectedToken}
+              Balance: {Number(formattedBalance).toFixed(6)} {selectedToken}
             </div>
             {hasInsufficientBalance && (
               <div className="text-xs text-red-500 mt-1">
