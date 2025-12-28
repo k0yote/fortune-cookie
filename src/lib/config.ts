@@ -32,7 +32,7 @@ export const TOKEN_CONFIGS: Record<TokenType, TokenConfig> = {
     decimals: 6,
     chainId: baseSepolia.id,
     chain: baseSepolia,
-    rpcUrl: 'https://sepolia.base.org',
+    rpcUrl: 'https://base-sepolia-rpc.publicnode.com',
   },
   JPYC: {
     address: JPYC_ADDRESS,
