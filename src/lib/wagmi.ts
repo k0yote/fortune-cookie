@@ -3,10 +3,11 @@ import { baseSepolia, sepolia } from 'wagmi/chains'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 
 // Get projectId from environment or use a placeholder
-export const projectId = process.env.WALLET_REOWN_PROJECT_ID || ''
+// NEXT_PUBLIC_ prefix is required for client-side access in Next.js
+export const projectId = process.env.NEXT_PUBLIC_WALLET_REOWN_PROJECT_ID || ''
 
 if (!projectId) {
-  console.warn('WALLET_REOWN_PROJECT_ID is not set. WalletConnect will not work.')
+  console.warn('NEXT_PUBLIC_WALLET_REOWN_PROJECT_ID is not set. WalletConnect will not work.')
 }
 
 // Metadata for the app
