@@ -1,7 +1,59 @@
-# Passkey Wallet - ガスレス送金デモ
+# Fortune Cookie Gacha - ガスレス決済デモ
 
-USDC（Base Sepolia）とJPYC（Sepolia）をガスレス送金するサンプルアプリケーションです。
-**2つのモード**と**2つのトークン**に対応しています。
+USDC（Base Sepolia）とJPYC（Sepolia）を使ったガスレス決済のサンプルアプリケーションです。
+
+## 主な機能
+
+### 🎰 Fortune Cookie Gacha（メイン）
+- **ガチャマシン風UI**: CSSアニメーションでガチャマシンを再現
+- **x402決済フロー**: HTTP 402 + ERC-3009による決済
+- **Chainlink価格フィード**: JPY/USD為替レートをリアルタイム取得
+- **Fortune Cookie API**: 外部APIからフォーチュンメッセージを取得
+- **マルチトークン対応**: USDC ($0.50) / JPYC (約75円) で支払い可能
+
+### 💳 ウォレット機能（/wallet）
+- **Passkeyモード**: ERC-4337 + Paymaster でガスレス送金
+- **EOAモード**: ERC-3009 + Facilitator でガスレス送金
+- **QR決済**: スキャン払い対応
+
+## デモフロー
+
+```
+┌─────────────────┐
+│   / (ガチャ)    │  メインページ
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  ウォレット接続  │  WalletConnect
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ トークン選択    │  USDC / JPYC
+│ (残高表示)      │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Play ボタン    │  残高不足時は無効化
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  EIP-712署名    │  transferWithAuthorization
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Facilitator    │  ガス代負担で実行
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Fortune表示    │  ボールが落ちて結果表示
+└─────────────────┘
+```
 
 ## 対応トークン
 
@@ -27,6 +79,8 @@ USDC（Base Sepolia）とJPYC（Sepolia）をガスレス送金するサンプ�
 | [Reown AppKit](https://reown.com/) | WalletConnect対応 |
 | [Pimlico](https://pimlico.io/) | Bundler & Paymaster |
 | [Coinbase Smart Wallet](https://github.com/coinbase/smart-wallet) | ERC-4337 Smart Account |
+| [Chainlink](https://chain.link/) | JPY/USD 価格フィード (Mainnet) |
+| [Fortune Cookie API](https://apiverve.com/) | フォーチュンメッセージ取得 |
 
 ## 機能
 
@@ -121,17 +175,24 @@ npm install --legacy-peer-deps
 # Pimlico (Passkeyモード用)
 NEXT_PUBLIC_PIMLICO_API_KEY=pim_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
-# Facilitator (EOAモード用) - ガス代を負担するウォレットの秘密鍵
+# Facilitator (EOAモード/ガチャ用) - ガス代を負担するウォレットの秘密鍵
 # 注意: Base SepoliaとSepoliaの両方にETHが必要
 FACILITATOR_PRIVATE_KEY=0x...
 
-# Reown/WalletConnect (EOAモード用)
+# Reown/WalletConnect
 NEXT_PUBLIC_REOWN_PROJECT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Fortune Cookie API (ガチャ用)
+FORTUNE_API_KEY=your_api_key_here
+
+# ガチャ受取先アドレス (オプション)
+GACHA_RECIPIENT_ADDRESS=0x...
 ```
 
 **取得先:**
 - [Pimlico Dashboard](https://dashboard.pimlico.io/) - Pimlico API Key
 - [Reown Cloud](https://cloud.reown.com/) - Reown Project ID
+- [APIVerve](https://apiverve.com/) - Fortune Cookie API Key
 
 ### 3. Facilitatorへの入金
 
@@ -197,23 +258,31 @@ QRコード表示        →        スマホでWebアプリ開く
 ```
 ├── src/
 │   ├── app/
-│   │   ├── page.tsx                    # モード選択UI
+│   │   ├── page.tsx                    # /gacha へリダイレクト
+│   │   ├── gacha/
+│   │   │   └── page.tsx                # ガチャページ
+│   │   ├── wallet/
+│   │   │   └── page.tsx                # ウォレットページ (Passkey/EOA)
 │   │   └── api/
+│   │       ├── gacha/
+│   │       │   └── route.ts            # ガチャAPI (x402決済)
 │   │       └── facilitator/
 │   │           └── erc3009/
-│   │               └── route.ts        # ERC-3009 Facilitator API (マルチチェーン)
+│   │               └── route.ts        # ERC-3009 Facilitator API
 │   ├── components/
+│   │   ├── GachaContent.tsx            # ガチャUI + アニメーション
 │   │   ├── PasskeyWallet.tsx           # Passkeyモード (USDC)
-│   │   ├── EOAWallet.tsx               # EOAモード (USDC/JPYC切り替え)
+│   │   ├── EOAWallet.tsx               # EOAモード (USDC/JPYC)
 │   │   ├── QRReceive.tsx               # QRコード表示
 │   │   ├── QRScanner.tsx               # QRスキャナー
 │   │   └── providers/
 │   │       └── ReownProvider.tsx       # WalletConnect Provider
 │   └── lib/
 │       ├── config.ts                   # トークン・チェーン設定
+│       ├── chainlink.ts                # Chainlink価格フィード
 │       ├── passkey.ts                  # Passkey + Smart Account
-│       ├── erc3009.ts                  # ERC-3009ユーティリティ (マルチトークン)
-│       ├── wagmi.ts                    # wagmi設定 (マルチチェーン)
+│       ├── erc3009.ts                  # ERC-3009ユーティリティ
+│       ├── wagmi.ts                    # wagmi設定
 │       └── qrPayment.ts                # QR決済データ形式
 ```
 
@@ -257,6 +326,18 @@ Passkeyで署名したUserOperationを直接検証・実行できます。
 ### WalletConnect / Reown
 モバイルウォレットとの接続を可能にするプロトコル。
 ユーザーはブラウザ拡張なしでMetaMaskアプリ等を使用できます。
+
+### Chainlink Price Feed
+JPY/USD為替レートをEthereum Mainnetから取得。
+JPYC支払い時の価格計算に使用します。
+
+```
+Feed Address: 0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3
+Chain: Ethereum Mainnet
+```
+
+- 1分間キャッシュで高速化
+- フォールバック価格: 150 JPY/USD
 
 ## 注意事項
 
