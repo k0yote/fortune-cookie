@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const pimlicoApiKey = process.env.NEXT_PUBLIC_PIMLICO_API_KEY
+    const pimlicoApiKey = process.env.PAYMASTER_PIMLICO_API_KEY
     if (!pimlicoApiKey) {
       return NextResponse.json(
         { error: 'Bundler not configured' },
@@ -170,7 +170,7 @@ function toHex(value: string | number | bigint | undefined): Hex {
 
 // GET endpoint to check facilitator status
 export async function GET() {
-  const pimlicoApiKey = process.env.NEXT_PUBLIC_PIMLICO_API_KEY
+  const pimlicoApiKey = process.env.PAYMASTER_PIMLICO_API_KEY
 
   if (!pimlicoApiKey) {
     return NextResponse.json({

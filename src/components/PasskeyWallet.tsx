@@ -232,7 +232,7 @@ export default function PasskeyWallet() {
           {!PIMLICO_API_KEY && (
             <div className="p-3 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded-lg text-xs">
               <p className="font-semibold mb-1">設定が必要です</p>
-              <p>.env.local に NEXT_PUBLIC_PIMLICO_API_KEY を設定してください。</p>
+              <p>.env.local に PAYMASTER_PIMLICO_API_KEY を設定してください。</p>
             </div>
           )}
         </div>

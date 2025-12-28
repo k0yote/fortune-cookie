@@ -73,7 +73,7 @@ export function getPublicClientForToken(token: TokenType) {
 }
 
 // Pimlico API Key - 環境変数から取得
-export const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY || ''
+export const PIMLICO_API_KEY = process.env.PAYMASTER_PIMLICO_API_KEY || ''
 
 export const BUNDLER_URL = `https://api.pimlico.io/v2/base-sepolia/rpc?apikey=${PIMLICO_API_KEY}`
 

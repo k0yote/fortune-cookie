@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Hex } from 'viem'
 
 // Pimlico API (Facilitator owns this)
-const PIMLICO_API_KEY = process.env.NEXT_PUBLIC_PIMLICO_API_KEY || ''
+const PIMLICO_API_KEY = process.env.PAYMASTER_PIMLICO_API_KEY || ''
 const BUNDLER_URL = `https://api.pimlico.io/v2/base-sepolia/rpc?apikey=${PIMLICO_API_KEY}`
 
 // EntryPoint v0.6

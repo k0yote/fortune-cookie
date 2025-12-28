@@ -173,14 +173,14 @@ npm install --legacy-peer-deps
 
 ```env
 # Pimlico (Passkeyモード用)
-NEXT_PUBLIC_PIMLICO_API_KEY=pim_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+PAYMASTER_PIMLICO_API_KEY=pim_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # Facilitator (EOAモード/ガチャ用) - ガス代を負担するウォレットの秘密鍵
 # 注意: Base SepoliaとSepoliaの両方にETHが必要
 FACILITATOR_PRIVATE_KEY=0x...
 
 # Reown/WalletConnect
-NEXT_PUBLIC_REOWN_PROJECT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+NEXT_PUBLIC_WALLET_REOWN_PROJECT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # Fortune Cookie API (ガチャ用)
 FORTUNE_API_KEY=your_api_key_here
