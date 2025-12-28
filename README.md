@@ -180,7 +180,7 @@ PAYMASTER_PIMLICO_API_KEY=pim_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 FACILITATOR_PRIVATE_KEY=0x...
 
 # Reown/WalletConnect
-NEXT_PUBLIC_WALLET_REOWN_PROJECT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+WALLET_REOWN_PROJECT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # Fortune Cookie API (ガチャ用)
 FORTUNE_API_KEY=your_api_key_here
