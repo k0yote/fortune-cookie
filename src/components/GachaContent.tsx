@@ -1,11 +1,37 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useAccount, useSignTypedData, useSwitchChain, useReadContract } from 'wagmi'
-import { type Address, formatUnits } from 'viem'
+import { type Address, type Hex, formatUnits, parseUnits, encodeFunctionData, http, custom } from 'viem'
+import { createBundlerClient, createPaymasterClient } from 'viem/account-abstraction'
 import { useAppKit } from '@reown/appkit/react'
 import { ERC3009_TYPES, generateNonce, getTokenDomain } from '@/lib/erc3009'
-import { type TokenType, TOKEN_CONFIGS, ERC20_ABI } from '@/lib/config'
+import { type TokenType, TOKEN_CONFIGS, ERC20_ABI, publicClient, USDC_ADDRESS } from '@/lib/config'
+import { createPasskeyWallet, loadPasskeyWallet, clearStoredCredential, getStoredCredential } from '@/lib/passkey'
+
+// Custom transport that uses our proxy API
+const pimlicoProxyTransport = custom({
+  async request({ method, params }) {
+    const response = await fetch('/api/pimlico', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    })
+    const data = await response.json()
+    if (data.error) {
+      throw new Error(data.error.message || 'RPC error')
+    }
+    return data.result
+  },
+})
+
+type WalletMode = 'passkey' | 'eoa'
+type PasskeyState = 'disconnected' | 'loading' | 'connected'
+
+interface PasskeyWalletData {
+  address: Hex
+  smartAccount: Awaited<ReturnType<typeof createPasskeyWallet>>['smartAccount']
+}
 
 interface PaymentInfo {
   version: string
@@ -461,10 +487,20 @@ function ResultPopup({
 }
 
 export default function GachaContent() {
-  const { address, isConnected, chainId } = useAccount()
+  // EOA Wallet hooks
+  const { address: eoaAddress, isConnected: eoaConnected, chainId } = useAccount()
   const { signTypedDataAsync } = useSignTypedData()
   const { switchChainAsync } = useSwitchChain()
   const { open } = useAppKit()
+
+  // Wallet mode state
+  const [walletMode, setWalletMode] = useState<WalletMode>('passkey')
+
+  // Passkey wallet state
+  const [passkeyState, setPasskeyState] = useState<PasskeyState>('loading')
+  const [passkeyWallet, setPasskeyWallet] = useState<PasskeyWalletData | null>(null)
+  const [passkeyBalance, setPasskeyBalance] = useState<string>('0')
+  const [passkeyLoading, setPasskeyLoading] = useState(false)
 
   const [selectedToken, setSelectedToken] = useState<TokenType>('USDC')
   const [paymentInfo, setPaymentInfo] = useState<PaymentInfo | null>(null)
@@ -476,41 +512,131 @@ export default function GachaContent() {
   // Get token config for selected token
   const tokenConfig = TOKEN_CONFIGS[selectedToken]
 
-  // Read USDC balance
+  // Determine if connected based on mode
+  const isConnected = walletMode === 'passkey' ? passkeyState === 'connected' : eoaConnected
+  const address = walletMode === 'passkey' ? passkeyWallet?.address : eoaAddress
+
+  // Read USDC balance (EOA mode)
   const { data: usdcBalance, refetch: refetchUsdc } = useReadContract({
     address: TOKEN_CONFIGS.USDC.address,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
-    args: address ? [address] : undefined,
+    args: eoaAddress ? [eoaAddress] : undefined,
     chainId: TOKEN_CONFIGS.USDC.chainId,
     query: {
-      enabled: !!address,
+      enabled: !!eoaAddress && walletMode === 'eoa',
     },
   })
 
-  // Read JPYC balance
+  // Read JPYC balance (EOA mode)
   const { data: jpycBalance, refetch: refetchJpyc } = useReadContract({
     address: TOKEN_CONFIGS.JPYC.address,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
-    args: address ? [address] : undefined,
+    args: eoaAddress ? [eoaAddress] : undefined,
     chainId: TOKEN_CONFIGS.JPYC.chainId,
     query: {
-      enabled: !!address,
+      enabled: !!eoaAddress && walletMode === 'eoa',
     },
   })
 
-  // Get current balance based on selected token
-  const currentBalance = selectedToken === 'USDC' ? usdcBalance : jpycBalance
-  const formattedBalance = currentBalance
-    ? formatUnits(currentBalance as bigint, tokenConfig.decimals)
-    : '0'
+  // Fetch Passkey balance
+  const fetchPasskeyBalance = useCallback(async () => {
+    if (!passkeyWallet) return
+    try {
+      const balance = await publicClient.readContract({
+        address: USDC_ADDRESS,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [passkeyWallet.address],
+      })
+      setPasskeyBalance(formatUnits(balance, 6))
+    } catch (err) {
+      console.error('Failed to fetch passkey balance:', err)
+    }
+  }, [passkeyWallet])
+
+  // Initialize passkey wallet
+  useEffect(() => {
+    const init = async () => {
+      const stored = getStoredCredential()
+      if (stored) {
+        try {
+          const walletData = await loadPasskeyWallet()
+          if (walletData) {
+            setPasskeyWallet({
+              address: walletData.address,
+              smartAccount: walletData.smartAccount,
+            })
+            setPasskeyState('connected')
+            return
+          }
+        } catch (err) {
+          console.error('Failed to load passkey wallet:', err)
+          clearStoredCredential()
+        }
+      }
+      setPasskeyState('disconnected')
+    }
+    init()
+  }, [])
+
+  // Fetch passkey balance periodically
+  useEffect(() => {
+    if (passkeyWallet && walletMode === 'passkey') {
+      fetchPasskeyBalance()
+      const interval = setInterval(fetchPasskeyBalance, 10000)
+      return () => clearInterval(interval)
+    }
+  }, [passkeyWallet, walletMode, fetchPasskeyBalance])
+
+  // Get current balance based on mode and token
+  const getCurrentBalance = () => {
+    if (walletMode === 'passkey') {
+      return passkeyBalance
+    }
+    const balance = selectedToken === 'USDC' ? usdcBalance : jpycBalance
+    return balance ? formatUnits(balance as bigint, tokenConfig.decimals) : '0'
+  }
+  const formattedBalance = getCurrentBalance()
 
   // Check if balance is sufficient
   const requiredAmount = paymentInfo?.prices[selectedToken]?.amount
-  const hasInsufficientBalance = currentBalance !== undefined && requiredAmount
-    ? (currentBalance as bigint) < BigInt(requiredAmount)
-    : false
+  const hasInsufficientBalance = (() => {
+    if (!requiredAmount) return false
+    if (walletMode === 'passkey') {
+      const balanceBigInt = parseUnits(passkeyBalance || '0', 6)
+      return balanceBigInt < BigInt(requiredAmount)
+    }
+    const currentBalance = selectedToken === 'USDC' ? usdcBalance : jpycBalance
+    return currentBalance !== undefined ? (currentBalance as bigint) < BigInt(requiredAmount) : false
+  })()
+
+  // Create passkey wallet
+  const createWallet = async () => {
+    setPasskeyLoading(true)
+    setError(null)
+    try {
+      const walletData = await createPasskeyWallet('Fortune Gacha Wallet')
+      setPasskeyWallet({
+        address: walletData.address,
+        smartAccount: walletData.smartAccount,
+      })
+      setPasskeyState('connected')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'ウォレット作成に失敗しました')
+    } finally {
+      setPasskeyLoading(false)
+    }
+  }
+
+  // Disconnect passkey wallet
+  const disconnectPasskey = () => {
+    clearStoredCredential()
+    setPasskeyWallet(null)
+    setPasskeyState('disconnected')
+    setPasskeyBalance('0')
+  }
 
   useEffect(() => {
     fetchPaymentInfo()
@@ -529,10 +655,14 @@ export default function GachaContent() {
   }
 
   const handleTokenChange = async (token: TokenType) => {
+    // Passkey mode only supports USDC
+    if (walletMode === 'passkey' && token === 'JPYC') return
+
     setSelectedToken(token)
     const config = TOKEN_CONFIGS[token]
 
-    if (isConnected && chainId !== config.chainId) {
+    // Only switch chain for EOA mode
+    if (walletMode === 'eoa' && eoaConnected && chainId !== config.chainId) {
       try {
         await switchChainAsync({ chainId: config.chainId })
       } catch (err) {
@@ -541,8 +671,67 @@ export default function GachaContent() {
     }
   }
 
-  const handlePlay = async () => {
-    if (!isConnected || !address || !paymentInfo) {
+  // Passkey payment flow (via proxy API)
+  const handlePasskeyPlay = async () => {
+    if (!passkeyWallet || !paymentInfo) return
+
+    setError(null)
+    setGachaState('loading')
+
+    try {
+      const priceInfo = paymentInfo.prices.USDC
+
+      // Create bundler and paymaster clients using proxy
+      const paymasterClient = createPaymasterClient({
+        transport: pimlicoProxyTransport,
+      })
+
+      const bundlerClient = createBundlerClient({
+        client: publicClient,
+        transport: pimlicoProxyTransport,
+        paymaster: paymasterClient,
+      })
+
+      // Create calldata for USDC transfer
+      const calldata = encodeFunctionData({
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [paymentInfo.recipient as Hex, BigInt(priceInfo.amount)],
+      })
+
+      setGachaState('spinning')
+
+      // Send UserOperation (bundlerClient handles everything)
+      const userOpHash = await bundlerClient.sendUserOperation({
+        account: passkeyWallet.smartAccount,
+        calls: [{ to: USDC_ADDRESS, data: calldata }],
+      })
+
+      // Wait for receipt
+      const receipt = await bundlerClient.waitForUserOperationReceipt({
+        hash: userOpHash,
+      })
+
+      // Fetch fortune
+      const fortuneRes = await fetch('/api/gacha/fortune')
+      const fortuneData = await fortuneRes.json()
+
+      setTxHash(receipt.receipt.transactionHash)
+      setFortune(fortuneData.fortune || { fortune: '吉', message: 'Good luck!' })
+      setGachaState('result')
+
+      // Refetch balance
+      fetchPasskeyBalance()
+    } catch (err) {
+      console.error('Passkey gacha error:', err)
+      setError(err instanceof Error ? err.message : 'Unknown error')
+      setGachaState('idle')
+    }
+  }
+
+  // EOA payment flow
+  const handleEOAPlay = async () => {
+    if (!eoaConnected || !eoaAddress || !paymentInfo) {
       return
     }
 
@@ -559,7 +748,7 @@ export default function GachaContent() {
 
       const now = BigInt(Math.floor(Date.now() / 1000))
       const authorization = {
-        from: address as Address,
+        from: eoaAddress as Address,
         to: paymentInfo.recipient as Address,
         value: BigInt(priceInfo.amount),
         validAfter: 0n,
@@ -616,6 +805,14 @@ export default function GachaContent() {
     }
   }
 
+  const handlePlay = async () => {
+    if (walletMode === 'passkey') {
+      await handlePasskeyPlay()
+    } else {
+      await handleEOAPlay()
+    }
+  }
+
   const handleReset = () => {
     setGachaState('idle')
     setFortune(null)
@@ -643,31 +840,66 @@ export default function GachaContent() {
           </p>
         </div>
 
-        {/* Token Selector */}
-        <div className="flex justify-center gap-2 mb-4">
-          <button
-            onClick={() => handleTokenChange('USDC')}
-            disabled={gachaState !== 'idle'}
-            className={`px-4 py-2 rounded-lg font-medium transition-all ${
-              selectedToken === 'USDC'
-                ? 'bg-blue-500 text-white shadow-lg'
-                : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100'
-            } ${gachaState !== 'idle' ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            USDC
-          </button>
-          <button
-            onClick={() => handleTokenChange('JPYC')}
-            disabled={gachaState !== 'idle'}
-            className={`px-4 py-2 rounded-lg font-medium transition-all ${
-              selectedToken === 'JPYC'
-                ? 'bg-green-500 text-white shadow-lg'
-                : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100'
-            } ${gachaState !== 'idle' ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            JPYC
-          </button>
+        {/* Wallet Mode Switcher */}
+        <div className="mb-4">
+          <div className="flex rounded-lg bg-white dark:bg-gray-800 p-1 shadow-md">
+            <button
+              onClick={() => { setWalletMode('passkey'); setSelectedToken('USDC'); }}
+              disabled={gachaState !== 'idle'}
+              className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                walletMode === 'passkey'
+                  ? 'bg-purple-500 text-white shadow-sm'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+              } ${gachaState !== 'idle' ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              Passkey
+            </button>
+            <button
+              onClick={() => setWalletMode('eoa')}
+              disabled={gachaState !== 'idle'}
+              className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${
+                walletMode === 'eoa'
+                  ? 'bg-orange-500 text-white shadow-sm'
+                  : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+              } ${gachaState !== 'idle' ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              EOA (MetaMask)
+            </button>
+          </div>
+          <p className="text-center text-xs text-gray-500 dark:text-gray-400 mt-1">
+            {walletMode === 'passkey'
+              ? 'Paymaster: ガス代無料 (USDC only)'
+              : 'Facilitator: ガス代無料 (USDC/JPYC)'}
+          </p>
         </div>
+
+        {/* Token Selector - Only show for EOA mode */}
+        {walletMode === 'eoa' && (
+          <div className="flex justify-center gap-2 mb-4">
+            <button
+              onClick={() => handleTokenChange('USDC')}
+              disabled={gachaState !== 'idle'}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                selectedToken === 'USDC'
+                  ? 'bg-blue-500 text-white shadow-lg'
+                  : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100'
+              } ${gachaState !== 'idle' ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              USDC
+            </button>
+            <button
+              onClick={() => handleTokenChange('JPYC')}
+              disabled={gachaState !== 'idle'}
+              className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                selectedToken === 'JPYC'
+                  ? 'bg-green-500 text-white shadow-lg'
+                  : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100'
+              } ${gachaState !== 'idle' ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              JPYC
+            </button>
+          </div>
+        )}
 
         {/* Price Display */}
         <div className="text-center mb-6">
@@ -707,29 +939,63 @@ export default function GachaContent() {
 
         {/* Action Button */}
         <div className="text-center">
-          {!isConnected ? (
-            <button
-              onClick={() => open()}
-              className="w-full py-4 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-lg transition-all hover:shadow-xl"
-            >
-              Connect Wallet
-            </button>
+          {walletMode === 'passkey' ? (
+            // Passkey mode
+            passkeyState === 'loading' ? (
+              <button disabled className="w-full py-4 bg-gray-400 text-white font-bold rounded-xl shadow-lg">
+                Loading...
+              </button>
+            ) : passkeyState === 'disconnected' ? (
+              <button
+                onClick={createWallet}
+                disabled={passkeyLoading}
+                className="w-full py-4 bg-purple-500 hover:bg-purple-600 text-white font-bold rounded-xl shadow-lg transition-all hover:shadow-xl disabled:bg-gray-400"
+              >
+                {passkeyLoading ? 'Creating...' : 'Create Passkey Wallet'}
+              </button>
+            ) : (
+              <button
+                onClick={handlePlay}
+                disabled={gachaState !== 'idle' || hasInsufficientBalance}
+                className={`w-full py-4 font-bold rounded-xl shadow-lg transition-all ${
+                  gachaState !== 'idle' || hasInsufficientBalance
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white hover:shadow-xl'
+                }`}
+              >
+                {gachaState === 'idle' ? (
+                  hasInsufficientBalance ? 'Insufficient Balance' : <>Play ({getPrice()})</>
+                ) : (
+                  'Processing...'
+                )}
+              </button>
+            )
           ) : (
-            <button
-              onClick={handlePlay}
-              disabled={gachaState !== 'idle' || hasInsufficientBalance}
-              className={`w-full py-4 font-bold rounded-xl shadow-lg transition-all ${
-                gachaState !== 'idle' || hasInsufficientBalance
-                  ? 'bg-gray-400 cursor-not-allowed'
-                  : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white hover:shadow-xl'
-              }`}
-            >
-              {gachaState === 'idle' ? (
-                hasInsufficientBalance ? 'Insufficient Balance' : <>Play ({getPrice()})</>
-              ) : (
-                'Processing...'
-              )}
-            </button>
+            // EOA mode
+            !eoaConnected ? (
+              <button
+                onClick={() => open()}
+                className="w-full py-4 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl shadow-lg transition-all hover:shadow-xl"
+              >
+                Connect Wallet
+              </button>
+            ) : (
+              <button
+                onClick={handlePlay}
+                disabled={gachaState !== 'idle' || hasInsufficientBalance}
+                className={`w-full py-4 font-bold rounded-xl shadow-lg transition-all ${
+                  gachaState !== 'idle' || hasInsufficientBalance
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white hover:shadow-xl'
+                }`}
+              >
+                {gachaState === 'idle' ? (
+                  hasInsufficientBalance ? 'Insufficient Balance' : <>Play ({getPrice()})</>
+                ) : (
+                  'Processing...'
+                )}
+              </button>
+            )
           )}
         </div>
 
@@ -737,10 +1003,19 @@ export default function GachaContent() {
         {isConnected && address && (
           <div className="mt-4 text-center">
             <div className="text-sm text-gray-500 dark:text-gray-400">
+              {walletMode === 'passkey' && <span className="text-purple-500">[Smart Wallet] </span>}
               {address.slice(0, 6)}...{address.slice(-4)}
+              {walletMode === 'passkey' && (
+                <button
+                  onClick={disconnectPasskey}
+                  className="ml-2 text-red-500 hover:text-red-600 text-xs"
+                >
+                  (Disconnect)
+                </button>
+              )}
             </div>
             <div className={`text-lg font-bold mt-1 ${hasInsufficientBalance ? 'text-red-500' : 'text-green-600 dark:text-green-400'}`}>
-              Balance: {Number(formattedBalance).toFixed(6)} {selectedToken}
+              Balance: {Number(formattedBalance).toFixed(6)} {walletMode === 'passkey' ? 'USDC' : selectedToken}
             </div>
             {hasInsufficientBalance && (
               <div className="text-xs text-red-500 mt-1">

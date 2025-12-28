@@ -6,7 +6,7 @@ import {
   parseUnits,
   type Hex,
   encodeFunctionData,
-  http,
+  custom,
 } from 'viem'
 import {
   createBundlerClient,
@@ -18,7 +18,23 @@ import {
   clearStoredCredential,
   getStoredCredential,
 } from '@/lib/passkey'
-import { publicClient, USDC_ADDRESS, USDC_ABI, baseSepolia, PIMLICO_API_KEY } from '@/lib/config'
+import { publicClient, USDC_ADDRESS, USDC_ABI, baseSepolia } from '@/lib/config'
+
+// Custom transport that uses our proxy API
+const pimlicoProxyTransport = custom({
+  async request({ method, params }) {
+    const response = await fetch('/api/pimlico', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    })
+    const data = await response.json()
+    if (data.error) {
+      throw new Error(data.error.message || 'RPC error')
+    }
+    return data.result
+  },
+})
 
 // 固定値
 const FIXED_RECIPIENT = '0x096D076899FCd2572a3c0b977cbc4f8E2661C681'
@@ -135,25 +151,19 @@ export default function PasskeyWallet() {
   const sendUSDC = async () => {
     if (!wallet) return
 
-    if (!PIMLICO_API_KEY) {
-      setError('Pimlico API Keyが設定されていません。')
-      return
-    }
-
     setIsSending(true)
     setError(null)
     setTxHash(null)
 
     try {
-      const pimlicoUrl = `https://api.pimlico.io/v2/base-sepolia/rpc?apikey=${PIMLICO_API_KEY}`
-
+      // Use proxy transport for Pimlico calls
       const paymasterClient = createPaymasterClient({
-        transport: http(pimlicoUrl),
+        transport: pimlicoProxyTransport,
       })
 
       const bundlerClient = createBundlerClient({
         client: publicClient,
-        transport: http(pimlicoUrl),
+        transport: pimlicoProxyTransport,
         paymaster: paymasterClient,
       })
 
@@ -229,12 +239,6 @@ export default function PasskeyWallet() {
             {loading ? '作成中...' : 'Passkeyでウォレット作成'}
           </button>
 
-          {!PIMLICO_API_KEY && (
-            <div className="p-3 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded-lg text-xs">
-              <p className="font-semibold mb-1">設定が必要です</p>
-              <p>.env.local に PAYMASTER_PIMLICO_API_KEY を設定してください。</p>
-            </div>
-          )}
         </div>
       ) : (
         <div className="space-y-6">
